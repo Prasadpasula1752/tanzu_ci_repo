@@ -1,0 +1,175 @@
+terraform {
+  required_providers {
+    azuredevops = {
+      source = "microsoft/azuredevops"
+      version = "0.1.0"
+    }
+   
+
+    azurerm = {
+      source = "hashicorp/azurerm"
+      version = "~>2.0"
+    }
+  }
+}
+
+provider "azurerm" {
+  features {}
+}
+
+provider "null" {
+}
+
+provider "azuredevops" {
+	org_service_url = "https://dev.azure.com/${var.azdevops_org_name}/"
+	personal_access_token = var.pat_token
+}
+
+data "azuredevops_project" "my_az_devops_project" {
+  name = var.project_name
+}
+
+#resource "azuredevops_project" "my_az_devops_project" {
+#  name       = var.project_name
+#  description = var.azdevops_proj_description
+#}
+
+resource "azuredevops_git_repository" "repository" {
+  project_id = azuredevops_project.my_az_devops_project.id
+  name       = var.repo_name
+  #default_branch = "refs/heads/master"
+  initialization {
+    init_type = "Clean"
+  }
+}
+
+
+
+resource "azuredevops_serviceendpoint_azurerm" "azure_service_conn" {
+  project_id            = azuredevops_project.my_az_devops_project.id
+  service_endpoint_name = var.az_svc_conn
+  description = "Managed by Terraform" 
+  credentials {
+    serviceprincipalid  = var.clientid
+    serviceprincipalkey = var.clientsecret
+  }
+  azurerm_spn_tenantid      = var.tenantid
+  azurerm_subscription_id   = var.subscriptionid
+  azurerm_subscription_name = var.subscription_name
+}
+
+resource "azuredevops_resource_authorization" "auth" {
+  project_id  = azuredevops_project.my_az_devops_project.id
+  resource_id = azuredevops_serviceendpoint_azurerm.azure_service_conn.id
+  authorized  = true
+}
+
+resource "azuredevops_variable_group" "vars" {
+  project_id   = azuredevops_project.my_az_devops_project.id
+  name         = "VaribalesForPipeline"
+  description  = "These are the varibales which holds some static value, can be used by pipelines during build/release."
+  allow_access = true
+
+  variable {
+    name  = "kubernetescluster"
+    value = var.aks_cluster_name
+  }
+  
+  variable {
+    name  = "resourcegroup"
+    value = var.rg_name
+  }
+  
+  variable {
+    name  =  "svcconnname"
+    value =  var.az_svc_conn
+   }
+
+}
+
+resource "azuredevops_build_definition" "pipeline_setup" {
+  project_id = azuredevops_project.my_az_devops_project.id
+  name       = "AKS Setup"
+  #path       = "\\azure_pipelines.yaml"
+
+  ci_trigger {
+    use_yaml = true
+  }
+
+  repository {
+    repo_type   = "TfsGit"
+    repo_id     = azuredevops_git_repository.repository.id
+    branch_name = azuredevops_git_repository.repository.default_branch
+    yml_path    = "azure-pipelines.yml"
+  }
+  
+  variable_groups = [
+    azuredevops_variable_group.vars.id
+  ]
+}
+
+resource "null_resource" "creating_local_repo" {
+  provisioner "local-exec" {
+	command = "git init"
+  }
+  depends_on = [azuredevops_build_definition.pipeline_setup]
+}
+
+resource "null_resource" "adding_files_to_local_repo" {
+  provisioner "local-exec" {
+	command = "git add ."
+  }
+  depends_on = [null_resource.creating_local_repo]
+}
+
+resource "null_resource" "adding_user_email" {
+  provisioner "local-exec" {
+	command = "git config --global user.email \"${var.email}\""
+  }
+  depends_on = [null_resource.adding_files_to_local_repo]
+}
+
+resource "null_resource" "adding_user_name" {
+  provisioner "local-exec" {
+	command = "git config --global user.name \"${var.your_name}\""
+  }
+  depends_on = [null_resource.adding_user_email]
+}
+
+resource "null_resource" "commit" {
+  provisioner "local-exec" {
+	command = "git commit -m \"InitialCommit\" "
+  }
+  depends_on = [null_resource.adding_user_name]
+}
+
+resource "null_resource" "adding_remote_repo" {
+  provisioner "local-exec" {
+	command = "git remote add origin https://${var.pat_token}@dev.azure.com/${var.azdevops_org_name}/${azuredevops_project.my_az_devops_project.name}/_git/${var.repo_name}"
+  }
+  depends_on = [null_resource.commit]
+}
+
+resource "null_resource" "pulling_remote_repo" {
+  provisioner "local-exec" {
+	#command = "git pull origin master --allow-unrelated-histories"
+        command = "git pull origin master"
+  }
+  depends_on = [null_resource.adding_remote_repo]
+}
+
+resource "null_resource" "pushing_to_remote_repo" {
+  provisioner "local-exec" {
+	command = "git push -u origin --all"
+  }
+  depends_on = [null_resource.pulling_remote_repo]
+}
+
+#resource "null_resource" "running_pipeline" {
+#  provisioner "local-exec" {
+#	command = "az pipelines run --name ${azuredevops_build_definition.build.name} --org https://dev.azure.com/${var.azdevops_org_name}/ --project#${azuredevops_project.my_az_devops_project.name}"
+#  }
+#  depends_on = [null_resource.pushing_to_remote_repo]
+#}
+
+

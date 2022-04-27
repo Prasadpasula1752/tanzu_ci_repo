@@ -1,0 +1,8 @@
+azdevops_org_name = "enter-azure-devops-org-name"
+project_name = "enter-azure-devops-project-name"
+pat_token = "enter-azure-devops-org-pat-token"
+dockerhub_registry_username = "enter-dockerhub-registry-username"
+dockerhub_registry_email = "enter-dockerhub-registry-email"
+dockerhub_registry_password = "enter-dockerhub-registry-password"
+image_tag = "enter-image-tag"
+dockerhub_registry = "enter-dockerhub-registry-name"
